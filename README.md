@@ -1,4 +1,4 @@
-# DeepCache Course Project Submission
+# DeepCache 
 
 This repository contains **production-grade** experiment code built on top of the **DeepCache** framework (Ma et al., CVPR 2024). It was developed as a graduate class project to reproduce, extend, and deeply analyze the key contributions of DeepCache, including new ablation studies, diversity analyses, and benchmark reproductions.
 
