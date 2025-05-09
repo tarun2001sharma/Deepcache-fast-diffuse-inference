@@ -1,0 +1,13 @@
+```
+diffusers==0.24.1
+transformers==4.33.0
+DeepCache==0.1.0         # or latest version
+torch>=2.0.0
+torchvision>=0.15.0
+torch-fidelity>=0.3.0
+fvcore>=0.1.5.post20230218
+omegaconf>=2.3.0
+Pillow>=9.0.0
+tqdm>=4.64.0
+datasets>=2.0.0
+```  

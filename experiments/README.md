@@ -1,116 +1,182 @@
+# DeepCache Experiment Suite
 
-# Code
+This repository provides a set of **production‑quality** Python scripts to reproduce and extend the experiments from the [DeepCache: Accelerating Diffusion Models for Free](https://arxiv.org/abs/2312.00858) paper. Each script is designed to run independently: simply install dependencies, pass the required arguments, and inspect the results.
 
-## TOC
-- [Experiment Code for DDPM](#experiment-code-for-ddpm)
-- [Experiment Code for SD](#experiment-code-for-SD)
-- [Experiment Code for LDM](#experiment-code-for-LDM)
-- [MACs Calculation](#macs-calculation)
+---
 
-## Experiment Code for DDPM
+## Table of Contents
+1. [Setup](#setup)
+2. [Experiment Scripts](#experiment-scripts)
+   - [DDPM Benchmarks](#ddpm-benchmarks)
+   - [Stable Diffusion (SD) Workflows](#stable-diffusion-sd-workflows)
+   - [Latent Diffusion (LDM) Benchmarks](#latent-diffusion-ldm-benchmarks)
+   - [Ablation Studies](#ablation-studies)
+   - [Layer‑Wise Caching Ablation](#layer-wise-caching-ablation)
+   - [Diversity & Per‑Prompt Variance](#diversity--per-prompt-variance)
+   - [Scheduler Ablation](#scheduler-ablation)
+   - [Result Aggregation](#result-aggregation)
+3. [MACs (FLOPs) Profiling](#macs-flops-profiling)
+4. [Contributing](#contributing)
 
-#### Requirement
-```
-pip install accelerate lmdb scipy diffusers pytorch_fid
-```
+---
 
-#### Instructions
-1. Sample Images:
-```bash
-cd ddpm/
-accelerate launch ddim.py --config configs/{DATASET_NAME}.yml --exp deepcache --fid --timesteps 100 --eta 0 --ni --use_pretrained --cache --cache_interval 5 --branch 2
-```
-Select `DATASET_NAME` from [<u>cifar10</u>, <u>bedroom</u>, <u>church</u>]. For the experiment on `CIFAR10`, add `--skip_type quad` to use the quadratic skip type. `cache_interval` here corresponds to `N` in `1:N` as specified in the paper, and `branch` represents the selected branch to perform the caching strategy. The value of `branch` starts from 0.  In our experiment, we set `branch=2` (the 3-th skip path in the model)
+## Setup
 
-2. Testing FID:
-```bash
-python fid.py --path runtime_log/{YOUR_PATH_FOR_IMAGES}/images npz/cifar10_fid.npz
-```
-The pre-calculated npz archive for these three datasets can be downloaded [here](https://drive.google.com/file/d/1oAb3Jik40mExmUhWcF990IRDY5UvT1rh/view?usp=sharing). The npz archives are generated following [the instruction](https://github.com/mseitzer/pytorch-fid?tab=readme-ov-file#generating-a-compatible-npz-archive-from-a-dataset) in `pytorch-fid`.
+1. **Clone** this repository and navigate into it:
+   ```bash
+   git clone https://github.com/horseee/DeepCache.git
+   cd DeepCache
+   ```
+2. **Create** a virtual environment and activate it:
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate
+   ```
+3. **Install** the common dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+4. For **DDPM** and **LDM-4-G** experiments, you may need to download additional model checkpoints or datasets—consult each script’s `--help` for details.
 
+---
 
-## Experiment Code for SD
+## Experiment Scripts
 
-#### Requirement
-```
-pip install diffusers==0.24.0 transformers open_clip_torch
-```
+All scripts are located under the `experiments/` directory (or the repo root for core routines). Use `python <script>.py --help` to see detailed options.
 
-#### Instructions
+### DDPM Benchmarks
 
-* Step 1: Generate Images
+- **Script:** `experiments/ddpm/ddpm_experiments.py`  
+- **Purpose:** Apply DeepCache to DDPM pipelines on CIFAR‑10, LSUN Bedroom, and LSUN Church. Generate samples and compute FID.  
+- **Example:**
+  ```bash
+  cd experiments/ddpm
+  accelerate launch ddpm_experiments.py \
+    --dataset cifar10 \
+    --timesteps 100 \
+    --cache_interval 5 \
+    --branch 2 \
+    --output_dir ../../results/ddpm_cifar10
+  ```
 
-For DeepCache:
-```bash
-python generate.py --dataset coco2017 --layer 0 --block 0 --update_interval 2 --uniform --steps 50 --batch_size 16 
-```
+### Stable Diffusion (SD) Workflows
 
-For Baselines:
-```bash
-python generate.py --dataset coco2017  --original --steps 50 --batch_size 16 # For original pipeline
-python generate.py --dataset coco2017 --bk base --steps 50 --batch_size 16 # For BK-SDM
-```
+1. **Text‑to‑Image, Img2Img, Inpainting**
+   - **Script:** `generate.py`  
+   - **Demo:**
+     ```bash
+     python generate.py \
+       --model runwayml/stable-diffusion-v1-5 \
+       --prompt_file data/prompts.txt \
+       --cache_interval 3 \
+       --cache_branch_id 0 \
+       --steps 50 \
+       --batch_size 8 \
+       --output_dir results/sd_text2img
+     ```
+2. **BK‑SDM‑Tiny Baseline**
+   - **Script:** `baseline_BKSDM.py`  
+   - **Demo:**
+     ```bash
+     python baseline_BKSDM.py \
+       --model runwayml/stable-diffusion-v1-5 \
+       --prompts data/prompts.txt \
+       --steps 50 \
+       --output_dir results/bksdm_vs_deepcache
+     ```
+3. **Cache‑Interval Evolution (Fig 7)**
+   - **Script:** `cacheinterval_evolution.py`  
+   - **Demo:**
+     ```bash
+     python cacheinterval_evolution.py \
+       --model runwayml/stable-diffusion-v1-5 \
+       --prompt "A cat standing on a sink" \
+       --intervals 2 3 4 5 6 7 8 \
+       --steps 50 \
+       --output_dir results/interval_evolution
+     ```
+4. **CLIP Score Evaluation**
+   - **Script:** `clip_score.py`  
+   - **Purpose:** Compute CLIP similarity of generated images against their prompts.  
+   - **Usage:**
+     ```bash
+     python clip_score.py --images_dir results/sd_text2img --prompt_file data/prompts.txt
+     ```
+5. **Feature‐Map Similarity (Fig 2)**
+   - **Script:** `featuremap.py`  
+   - **Purpose:** Hook into the U‑Net up‑sampling block, extract feature maps across timesteps, and plot similarity heatmaps.
 
-* Step 2: Evaluate
-```bash
-python clip_score.py PATH_TO_SAVED_IMAGES
-```
+### Latent Diffusion (LDM) Benchmarks
 
-## Experiment Code for LDM
-#### Requirement
-Please follow [LDM](https://github.com/CompVis/latent-diffusion) to install the requirements. We have no extra requirements.
+- **Scripts:** `experiments/ldm/sampling.py` & `experiments/ldm/main.py`  
+- **Purpose:** Class‑conditional generation on ImageNet with LDM‑4‑G; compute FID, sFID, IS, precision, and recall (reproduce Table 1).  
+- **Demo:**
+  ```bash
+  cd experiments/ldm
+  python main.py \
+    --imagenet_val /path/to/imagenet/val \
+    --config configs/ldm4-g-imagenet.yaml \
+    --checkpoint checkpoints/ldm4-g-imagenet.ckpt \
+    --batch_size 500 \
+    --steps 250 \
+    --output_csv ../../results/table1_imagenet.csv
+  ```
 
-#### Instructions
-Under re-organizing and testing. The code has been released, and we will soon update the instructions.
+### Ablation Studies
 
+1. **Cache Branch & Scheduler Ablation**
+   - **Script:** `experiments/ablations.py`  
+   - **Purpose:** Sweep `cache_branch_id` and compare PLMS, DDIM, PNDM schedulers, measuring latency and CLIP.  
+   - **Demo:**
+     ```bash
+     python experiments/ablations.py \
+       --model_id runwayml/stable-diffusion-v1-5 \
+       --prompt "A mountain lake at sunrise" \
+       --intervals 3 5 \
+       --branches 0 1 2 3
+     ```
+2. **Layer‑Wise Caching Ablation**
+   - **Script:** `layer_wise_ablation.py`  
+   - **Purpose:** Evaluate every possible `cache_branch_id` at a fixed interval; log speedup, CLIP, and VRAM overhead.  
+   - **Demo:**
+     ```bash
+     python layer_wise_ablation.py \
+       --prompt "A sunset over the ocean" \
+       --interval 3 \
+       --output_csv results/layerwise.csv
+     ```
+3. **Diversity & Per‑Prompt Variance**
+   - **Script:** `diversity_per_prompt_variance.py`  
+   - **Purpose:** Generate multiple seeds per prompt, compute LPIPS and pixel MSE diversity, and CLIP score variance.  
+   - **Demo:**
+     ```bash
+     python diversity_per_prompt_variance.py \
+       --prompts data/prompts.txt \
+       --num_seeds 5 \
+       --cache_interval 3 \
+       --cache_branch_id 0 \
+       --output_csv results/diversity.csv
+     ```
+4. **Results Aggregation**
+   - **Script:** `method_results.py`  
+   - **Purpose:** Collect outputs from all experiments and produce a unified summary (CSV or Markdown).  
 
+---
 
-## MACs Calculation
-If you want to calculate the FLOPs for each model, and also the FLOPs of the partial model executed in DeepCache, you can use the following code snippet, insert it before the iteration of denoising, and get the MACs of the model. Here are two examples:
+## MACs (FLOPs) Profiling
 
-* For DDPM: (insert it in [Line 153](https://github.com/horseee/DeepCache/blob/fb0ec94e046068eceebe185b2f5cada55b11be1e/DeepCache/ddpm/ddpm/runners/deepcache.py#L153) for DDPM pipeline)
+Profiling FLOPs is built into `sampling.py` via the `compute_macs()` function (using `fvcore`). To include MACs logging in any pipeline:
+
 ```python
-import sys
-sys.path.append('../')
-from flops import count_ops_and_params
-example_inputs = {
-    'x': torch.randn(1, 3, self.config.data.image_size, self.config.data.image_size).to(self.device), 
-    't': torch.ones(1).to(self.device),
-    'prv_f': [torch.randn(1, 256, 16, 16).to(self.device)],
-    'branch': 2
-}
-macs, nparams = count_ops_and_params(model, example_inputs=example_inputs, layer_wise=False)
-self.logger.log("#Params: {:.4f} M".format(nparams/1e6))
-self.logger.log("#MACs: {:.4f} G".format(macs/1e9))
-exit()
+from sampling import compute_macs
+macs = compute_macs(model, device, resolution=256)
+print(f"Total MACs: {macs:.2f} G")
 ```
-You can enable `layer_wise` to `True` to display the FLOPs for each module. If you are using a different branch for caching, you might need to check and update the `prv_f` shape.
 
-* For Stable Diffusion: (insert it in [Line 752](https://github.com/horseee/DeepCache/blob/fb0ec94e046068eceebe185b2f5cada55b11be1e/DeepCache/sd/pipeline_stable_diffusion.py#L752) for SD pipeline)
-```python
-from ..flops import count_ops_and_params
-example_inputs = {
-    'sample': latent_model_input, 
-    'timestep': t,
-    'encoder_hidden_states': prompt_embeds,
-    'cross_attention_kwargs': cross_attention_kwargs,
-    'replicate_prv_feature': prv_features,
-    'quick_replicate': cache_interval>1,
-    'cache_layer_id': cache_layer_id,
-    'cache_block_id': cache_block_id,
-    'return_dict': False,
-}
-macs, nparams = count_ops_and_params(self.unet, example_inputs=example_inputs, layer_wise=False)
-print("#Params: {:.4f} M".format(nparams/1e6))
-print("#MACs: {:.4f} G".format(macs/1e9))
-exit() 
-```
-To view the FLOPs for each module, you can set the `layer_wise` parameter to `True`. Additionally, if you want to see the FLOPs for the partial model executed during the retrieve steps, you can find the results in the second step with `cache_interval` larger than 2.
+For detailed per‑module MACs, enable the `layer_wise=True` flag in `count_ops_and_params` (see the original README snippet).
 
+---
 
+## Contributing
 
-
-
-
-
-
+We welcome improvements, new experiments, and bug fixes. Please open issues or submit pull requests with descriptive titles and thorough documentation.
